@@ -28,8 +28,7 @@ def execute(actor, data, max_cost=0.10):
     url = f'{BASE}/acts/{actor}/run-sync-get-dataset-items'
     response = requests.post(url, params={'token': KEY, 'timeout': 180, 'maxItems': 250, 'maxTotalChargeUsd': max_cost}, json=data, timeout=205)
     if not response.ok:
-        msg = response.text[:400]
-        raise RuntimeError(f'Apify 응답 오류 ({response.status_code}): {msg}')
+        raise RuntimeError(f'Apify 응답 오류 ({response.status_code}). 요청 설정과 Apify 사용량을 확인해 주세요.')
     items = response.json()
     return items if isinstance(items, list) else []
 
@@ -53,50 +52,65 @@ def date(item):
             pass
     return None
 
+PRESETS = {
+    '한국': ['일상', '웃긴영상', '고양이', '육아'],
+    '미국': ['funny', 'cats', 'satisfying', 'parenting'],
+    '일본': ['猫', '日常', '面白い', '子育て'],
+}
+
 with st.sidebar:
     st.header('검색 설정')
-    tags = st.text_input('해시태그 (쉼표 구분)', 'cat, funny, 일상, 猫')
+    mode = st.radio('검색 방식', ['🌍 자동 떡상 발견', '🔎 주제 직접 검색'], horizontal=False)
+    if mode.startswith('🌍'):
+        regions = st.multiselect('탐색할 국가별 해시태그 묶음', list(PRESETS), default=['한국'])
+        st.caption('국가는 검색어 묶음 이름일 뿐, 작성자의 실제 국적을 인증하지 않습니다.')
+        all_tags = list(dict.fromkeys(tag for region in regions for tag in PRESETS[region]))
+        st.write('검색 후보:', ', '.join('#'+x for x in all_tags) if all_tags else '국가를 선택해 주세요')
+        max_tags = st.slider('이번 검색에 사용할 해시태그 수', 1, 4, 2)
+        words = all_tags[:max_tags]
+    else:
+        query = st.text_input('검색 주제/해시태그 (쉼표로 구분)', 'cat, funny')
+        words = list(dict.fromkeys(x.strip().lstrip('#') for x in query.split(',') if x.strip()))[:4]
+        st.caption('최대 4개 주제까지 사용할 수 있어요. 키워드가 아니라 해시태그를 기준으로 탐색합니다.')
     kinds = st.multiselect('콘텐츠 종류', ['Reels', 'Posts'], default=['Reels'])
-    per_tag = st.slider('해시태그당 수집 개수', 5, 30, 10, 5)
+    per_tag = st.slider('해시태그별 콘텐츠 수집 개수', 5, 30, 10, 5)
     days = st.number_input('최근 며칠', 1, 90, 7)
     followers_limit = st.number_input('최대 팔로워', 1, 1000000, 1000)
     min_views = st.number_input('릴스 최소 조회수', 0, 100000000, 100000, 10000)
     min_ratio = st.number_input('릴스 최소 조회수/팔로워 배율', 1, 10000, 20)
     min_eng = st.number_input('이미지·캐러셀 최소 좋아요', 0, 1000000, 100, 10)
-    max_accounts = st.slider('팔로워 조회 계정 상한', 1, 20, 5)
-    max_usd = st.select_slider('한 번의 Actor 호출 비용 상한 (USD)', options=[0.01,0.03,0.05,0.10,0.20], value=0.10)
-    run = st.button('🔎 공개 게시물 수집하고 분석하기', type='primary', use_container_width=True)
-    st.caption('실행할 때마다 Apify 크레딧이 사용될 수 있어요. 해시태그·콘텐츠 종류별 호출과 프로필 조회 호출마다 상한이 별도로 적용됩니다.')
+    max_accounts = st.slider('팔로워 조회 계정 상한', 1, 10, 3)
+    max_usd = st.select_slider('Actor 호출 1회 비용 상한 (USD)', options=[0.01, 0.03, 0.05, 0.10], value=0.03)
+    calls = len(words) * len(kinds) + max_accounts
+    st.warning(f'이번 검색의 최대 요청 수: {calls}회 (게시물 {len(words)*len(kinds)}회 + 프로필 최대 {max_accounts}회). 호출별 상한을 단순 합산하면 최대 ${calls*max_usd:.2f}입니다. 실제 청구액이나 월별 계정 한도가 아닙니다.')
+    run = st.button('🔎 지금 검색하기', type='primary', use_container_width=True)
+    st.caption('버튼을 눌러야 수집을 시작합니다. 이 버전은 정기 자동 실행을 하지 않아요. 실행할 때마다 Apify 크레딧이 차감될 수 있어요.')
 
-st.info('한국·미국·일본 게시물을 해시태그로 탐색할 수 있지만 실제 작성자 국가는 이 데이터만으로 확인할 수 없어요. 릴스는 조회수, 이미지·캐러셀은 좋아요를 기준으로 평가해요.')
+st.info('자동 발견은 미리 지정한 해시태그를 버튼 한 번으로 탐색합니다. 인기순·전체 인스타그램 검색이나 작성자 국가 검증은 제공하지 않아요.')
 
 if run:
-    words = list(dict.fromkeys(x.strip().lstrip('#') for x in tags.split(',') if x.strip()))[:5]
     if not words or not kinds:
-        st.warning('해시태그와 콘텐츠 종류를 선택해 주세요.')
+        st.warning('최소 하나의 해시태그와 콘텐츠 종류를 선택해 주세요.')
         st.stop()
-    st.caption(f'최대 {len(words)*len(kinds)}회 게시물 수집 + 최대 {max_accounts}회 프로필 조회가 실행될 수 있어요. 각 호출의 비용 상한은 ${max_usd:.2f}입니다.')
     result = []
     problems = []
     for tag in words:
         for kind in kinds:
             source = f'https://www.instagram.com/explore/tags/{tag}/'
-            data = {'directUrls':[source], 'resultsType': kind.lower(), 'resultsLimit': per_tag}
+            data = {'directUrls': [source], 'resultsType': kind.lower(), 'resultsLimit': per_tag}
             try:
                 with st.spinner(f'#{tag} · {kind} 수집 중…'):
                     rows = execute(SCRAPER, data, max_usd)
                 for row in rows:
+                    if not isinstance(row, dict):
+                        continue
                     if row.get('error'):
                         problems.append(f'{tag}/{kind}: {row.get("errorDescription", row.get("error"))}')
-                    elif isinstance(row, dict):
+                    else:
                         row['_kind_search'] = kind
                         result.append(row)
             except Exception as e:
-                problems.append(f'{tag}/{kind}: {e}')
-    if problems:
-        with st.expander(f'수집되지 않은 요청 {len(problems)}건'):
-            for x in problems:
-                st.write(x)
+                problems.append(f'{tag}/{kind}: 요청 실패 ({str(e)[:150]})')
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     records = {}
     for item in result:
@@ -106,9 +120,12 @@ if run:
         username = item.get('ownerUsername') or item.get('username')
         if not username:
             continue
-        url = item.get('url') or f'https://www.instagram.com/p/{item.get("shortCode", "")}/'
-        code = item.get('shortCode') or url
-        if code in records:
+        code = item.get('shortCode')
+        url = item.get('url') or (f'https://www.instagram.com/p/{code}/' if code else '')
+        if not code and not url:
+            continue
+        key = code or url
+        if key in records:
             continue
         kind = item.get('type', '')
         plays = num(item, 'videoPlayCount', 'igPlayCount', 'videoViewCount')
@@ -118,20 +135,20 @@ if run:
             continue
         if not is_video and (likes is None or likes < min_eng):
             continue
-        records[code] = {'username': username, 'url': url, 'kind': '릴스' if is_video else ('캐러셀' if kind == 'Sidecar' else '이미지'), 'plays': plays, 'likes': likes, 'comments': num(item, 'commentsCount'), 'posted': posted.strftime('%Y-%m-%d'), 'caption': item.get('caption', '') or '', 'thumbnail': item.get('displayUrl', '')}
+        records[key] = {'username': username, 'url': url, 'kind': '릴스' if is_video else ('캐러셀' if kind == 'Sidecar' else '이미지'), 'plays': plays, 'likes': likes, 'comments': num(item, 'commentsCount'), 'posted': posted.strftime('%Y-%m-%d'), 'caption': item.get('caption', '') or ''}
     candidates = list(records.values())
-    candidates.sort(key=lambda x: x['plays'] if x['kind']=='릴스' else x['likes'] or 0, reverse=True)
+    candidates.sort(key=lambda x: x['plays'] if x['kind'] == '릴스' else (x['likes'] or 0), reverse=True)
     unique_users = list(dict.fromkeys(x['username'] for x in candidates))[:max_accounts]
     profiles = {}
     for user in unique_users:
         try:
             with st.spinner(f'@{user} 팔로워 확인 중…'):
-                rows = execute(PROFILE, {'usernames':[user], 'resultsLimit':1}, max_usd)
+                rows = execute(PROFILE, {'usernames': [user], 'resultsLimit': 1}, max_usd)
             for p in rows:
-                if p.get('username') == user:
+                if isinstance(p, dict) and p.get('username', '').lower() == user.lower():
                     profiles[user] = num(p, 'followersCount')
-        except Exception as e:
-            problems.append(f'프로필 @{user}: {e}')
+        except Exception:
+            problems.append(f'프로필 @{user}: 조회에 실패했어요.')
     hits = []
     unchecked = 0
     for r in candidates:
@@ -141,9 +158,9 @@ if run:
             continue
         if followers > followers_limit:
             continue
-        base = r['plays'] if r['kind']=='릴스' else r['likes']
+        base = r['plays'] if r['kind'] == '릴스' else r['likes']
         ratio = base / max(1, followers)
-        if r['kind']=='릴스' and ratio < min_ratio:
+        if r['kind'] == '릴스' and ratio < min_ratio:
             continue
         r['followers'] = followers
         r['ratio'] = ratio
@@ -152,8 +169,14 @@ if run:
     st.session_state['hits'] = hits
     st.session_state['unchecked'] = unchecked
     st.session_state['count'] = len(result)
+    st.session_state['problems'] = problems
+    st.session_state['mode_used'] = mode
 
 if 'hits' in st.session_state:
+    if st.session_state.get('problems'):
+        with st.expander(f"수집되지 않은 요청 {len(st.session_state['problems'])}건"):
+            for err in st.session_state['problems']:
+                st.write(err)
     st.subheader(f"수집된 원본 {st.session_state['count']}건 · 확인된 조건 충족 {len(st.session_state['hits'])}건")
     st.caption(f"팔로워 정보를 확인하지 못해 판정에서 제외한 후보: {st.session_state['unchecked']}건. 상한에 걸려 조회하지 않은 계정도 포함될 수 있어요.")
     for r in st.session_state['hits']:
@@ -164,7 +187,7 @@ if 'hits' in st.session_state:
     if not st.session_state['hits']:
         st.warning('이번 표본에서는 검증된 조건 충족 콘텐츠가 없어요. 해시태그·수집 범위를 조절해 보세요. 0개라고 인스타그램 전체에 없는 것은 아니에요.')
 else:
-    st.write('왼쪽에서 해시태그와 수집 개수를 정한 뒤 검색 버튼을 누르세요.')
+    st.write('왼쪽에서 자동 발견 또는 직접 검색을 고른 뒤 **지금 검색하기**를 눌러 주세요.')
 
 st.divider()
 st.header('🎬 Higgsfield 제작 메모')
