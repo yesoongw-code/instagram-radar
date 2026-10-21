@@ -6,7 +6,7 @@ import streamlit as st
 
 st.set_page_config(page_title='Instagram Radar', page_icon='📸', layout='wide')
 st.title('📸 Instagram Radar · 숨은 떡상 찾기')
-st.caption('Apify에서 공개 게시물·릴스 후보를 수집하고 작은 계정의 높은 반응을 찾아요. 인스타그램 전체 검색이나 국적 판정은 아니에요.')
+st.caption('Apify에서 공개 게시물·릴스 후보를 수집하고 작은 계정의 높은 반응을 찾아요. 인스타그램 전체 검색이나 국적 판정은 아니에요. · v3.0')
 
 SCRAPER = 'apify~instagram-scraper'
 PROFILE = 'apify~instagram-profile-scraper'
@@ -108,6 +108,7 @@ if run:
                         problems.append(f'{tag}/{kind}: {row.get("errorDescription", row.get("error"))}')
                     else:
                         row['_kind_search'] = kind
+                        row['_search_tag'] = tag
                         result.append(row)
             except Exception as e:
                 problems.append(f'{tag}/{kind}: 요청 실패 ({str(e)[:150]})')
@@ -135,7 +136,12 @@ if run:
             continue
         if not is_video and (likes is None or likes < min_eng):
             continue
-        records[key] = {'username': username, 'url': url, 'kind': '릴스' if is_video else ('캐러셀' if kind == 'Sidecar' else '이미지'), 'plays': plays, 'likes': likes, 'comments': num(item, 'commentsCount'), 'posted': posted.strftime('%Y-%m-%d'), 'caption': item.get('caption', '') or ''}
+        thumb = item.get('displayUrl') or item.get('thumbnailUrl') or item.get('display_url') or ''
+        if not isinstance(thumb, str) or not thumb.startswith('https://'):
+            thumb = ''
+        source_tag = item.get('_search_tag', '')
+        label = next((region for region, tags in PRESETS.items() if source_tag in tags), '직접 검색') if mode.startswith('🌍') else '직접 검색'
+        records[key] = {'region': label, 'thumbnail': thumb, 'username': username, 'url': url, 'kind': '릴스' if is_video else ('캐러셀' if kind == 'Sidecar' else '이미지'), 'plays': plays, 'likes': likes, 'comments': num(item, 'commentsCount'), 'posted': posted.strftime('%Y-%m-%d'), 'caption': item.get('caption', '') or ''}
     candidates = list(records.values())
     candidates.sort(key=lambda x: x['plays'] if x['kind'] == '릴스' else (x['likes'] or 0), reverse=True)
     unique_users = list(dict.fromkeys(x['username'] for x in candidates))[:max_accounts]
@@ -179,11 +185,46 @@ if 'hits' in st.session_state:
                 st.write(err)
     st.subheader(f"수집된 원본 {st.session_state['count']}건 · 확인된 조건 충족 {len(st.session_state['hits'])}건")
     st.caption(f"팔로워 정보를 확인하지 못해 판정에서 제외한 후보: {st.session_state['unchecked']}건. 상한에 걸려 조회하지 않은 계정도 포함될 수 있어요.")
-    for r in st.session_state['hits']:
-        with st.container(border=True):
-            st.markdown(f"**{r['kind']} · @{r['username']} · {r['ratio']:.1f}배**")
-            st.write(f"조회수: {r['plays'] if r['plays'] is not None else '해당 없음'} · 좋아요: {r['likes']} · 팔로워: {r['followers']} · 게시일: {r['posted']}")
-            st.write(r['caption'][:220]); st.link_button('인스타그램 원본 열기', r['url'])
+    hits = st.session_state['hits']
+    if hits:
+        st.caption('TOP 10은 확인된 조건 충족 결과 내 순위입니다. 인스타그램 전체 순위가 아니며, 검색 표본과 계정 조회 상한에 따라 달라집니다.')
+        region_options = ['전체'] + sorted({r.get('region', '미분류') for r in hits})
+        col_filter, col_sort = st.columns(2)
+        with col_filter:
+            region_selected = st.selectbox('결과 구분', region_options)
+        with col_sort:
+            sort_selected = st.selectbox('정렬', ['떡상 배율 높은 순', '조회수/좋아요 많은 순', '최신 게시일 순'])
+        visible = [r for r in hits if region_selected == '전체' or r.get('region') == region_selected]
+        if sort_selected == '조회수/좋아요 많은 순':
+            visible = sorted(visible, key=lambda r: r['plays'] if r['kind']=='릴스' else (r['likes'] or 0), reverse=True)
+        elif sort_selected == '최신 게시일 순':
+            visible = sorted(visible, key=lambda r: r['posted'], reverse=True)
+        else:
+            visible = sorted(visible, key=lambda r: r['ratio'], reverse=True)
+        st.subheader('🏆 떡상 TOP 10')
+        for position, r in enumerate(visible[:10], 1):
+            with st.container(border=True):
+                left, right = st.columns([1, 3], gap='medium')
+                with left:
+                    if r.get('thumbnail'):
+                        try:
+                            st.image(r['thumbnail'], use_container_width=True)
+                        except Exception:
+                            st.caption('썸네일 표시 불가')
+                    else:
+                        st.caption('썸네일 미제공')
+                with right:
+                    st.markdown(f"**{position}위 · {r['kind']} · @{r['username']}**")
+                    st.caption(f"검색 묶음: {r.get('region', '미분류')} · 게시일: {r['posted']}")
+                    st.markdown(f"**{r['ratio']:,.1f}배** · 팔로워 {r['followers']:,}명")
+                    if r['kind']=='릴스':
+                        st.write(f"조회수 {r['plays']:,}회 · 좋아요 {r['likes'] if r['likes'] is not None else '정보 없음'}")
+                    else:
+                        st.write(f"좋아요 {r['likes']:,}개 · 댓글 {r['comments'] if r['comments'] is not None else '정보 없음'}개")
+                    st.write(str(r['caption'])[:180])
+                    st.link_button('인스타그램 원본 열기', r['url'])
+        if len(visible) > 10:
+            st.caption(f'상위 10개만 표시 중 · 나머지 {len(visible)-10}개는 필터를 바꿔 확인하세요.')
     if not st.session_state['hits']:
         st.warning('이번 표본에서는 검증된 조건 충족 콘텐츠가 없어요. 해시태그·수집 범위를 조절해 보세요. 0개라고 인스타그램 전체에 없는 것은 아니에요.')
 else:
