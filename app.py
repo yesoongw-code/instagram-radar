@@ -6,7 +6,7 @@ import streamlit as st
 
 st.set_page_config(page_title='Instagram Radar', page_icon='📸', layout='wide')
 st.title('📸 Instagram Radar · 숨은 떡상 찾기')
-st.caption('Apify에서 공개 게시물·릴스 후보를 수집하고 작은 계정의 높은 반응을 찾아요. 인스타그램 전체 검색이나 국적 판정은 아니에요. · v3.0')
+st.caption('Apify 공개 콘텐츠 검색 + 선택 영상 기반 Higgsfield 반자동 제작 스튜디오 · v4.0')
 
 SCRAPER = 'apify~instagram-scraper'
 PROFILE = 'apify~instagram-profile-scraper'
@@ -222,7 +222,14 @@ if 'hits' in st.session_state:
                     else:
                         st.write(f"좋아요 {r['likes']:,}개 · 댓글 {r['comments'] if r['comments'] is not None else '정보 없음'}개")
                     st.write(str(r['caption'])[:180])
-                    st.link_button('인스타그램 원본 열기', r['url'])
+                    btn_open, btn_analyze = st.columns(2)
+                    with btn_open:
+                        st.link_button('인스타그램 원본 열기', r['url'], use_container_width=True)
+                    with btn_analyze:
+                        if st.button('🎬 AI 영상 분석하기', key=f"analyze_{r['url']}", use_container_width=True):
+                            st.session_state['studio_selected'] = dict(r)
+                            st.session_state['studio_notice'] = True
+                            st.rerun()
         if len(visible) > 10:
             st.caption(f'상위 10개만 표시 중 · 나머지 {len(visible)-10}개는 필터를 바꿔 확인하세요.')
     if not st.session_state['hits']:
@@ -231,18 +238,84 @@ else:
     st.write('왼쪽에서 자동 발견 또는 직접 검색을 고른 뒤 **지금 검색하기**를 눌러 주세요.')
 
 st.divider()
-st.header('🎬 Higgsfield 제작 메모')
-st.caption('영상 내용을 자동 시청·분석하는 기능은 없어요. 원본을 직접 보고 구조를 기록하면 재창작용 초안을 만들어 줍니다.')
-idea = st.text_input('새 영상 아이디어', placeholder='예: 우주복 입은 고양이가 마트에서 길을 잃는 이야기')
-subject = st.text_input('주인공', placeholder='예: 귀여운 주황색 고양이')
-scene = st.text_input('배경', placeholder='예: 미래 도시의 슈퍼마켓')
-action = st.text_area('행동과 반전', placeholder='예: 고양이가 과자 봉지를 열자 작은 로봇들이 튀어나온다')
-if st.button('프롬프트 초안 만들기'):
-    if not all([idea, subject, scene, action]):
-        st.warning('내용을 먼저 입력해 주세요.')
+st.header('🎬 AI 분석 · Higgsfield 제작 스튜디오')
+st.caption('무료 반자동 도구입니다. 게시물 메타데이터는 자동으로 가져오지만 AI가 원본 영상을 직접 시청하거나 장면을 해석하지는 않습니다. 별도 유료 AI API를 호출하지 않습니다.')
+selected = st.session_state.get('studio_selected')
+if selected:
+    st.success(f"선택한 콘텐츠: @{selected['username']} · {selected['kind']} · {selected['ratio']:,.1f}배")
+    cols = st.columns([1, 2])
+    with cols[0]:
+        if selected.get('thumbnail'):
+            try:
+                st.image(selected['thumbnail'], use_container_width=True)
+            except Exception:
+                st.caption('이미지 표시가 제한됐어요.')
+    with cols[1]:
+        st.write(f"게시일: {selected['posted']} · 검색 묶음: {selected.get('region', '미분류')}")
+        st.write(f"팔로워: {selected['followers']:,}명 · 조회수: {selected['plays'] if selected.get('plays') is not None else '해당 없음'}")
+        st.write(f"원본 캡션: {str(selected.get('caption',''))[:450]}")
+        st.link_button('원본 보고 장면 확인하기', selected['url'])
+    if st.button('선택 해제', key='clear_studio'):
+        st.session_state.pop('studio_selected', None)
+        st.rerun()
+else:
+    st.info('위 TOP 10 카드에서 **🎬 AI 영상 분석하기**를 누르면 여기로 연결됩니다. 검색하지 않고도 아래 양식으로 기획할 수 있어요.')
+
+st.subheader('1. 원본의 성공 구조 관찰 메모')
+st.caption('추측과 직접 관찰한 내용을 구분해 적어주세요. 아래 예시는 실제 영상 분석이 아닙니다.')
+col1, col2 = st.columns(2)
+with col1:
+    hook = st.text_area('첫 0~2초 후킹', key='studio_hook', placeholder='예: 화면에 갑자기 강아지가 등장해 무슨 일인지 궁금해짐')
+    tension = st.text_area('2~6초 전개·궁금증', key='studio_tension', placeholder='예: 강아지가 상자 앞에서 계속 기다림')
+with col2:
+    payoff = st.text_area('반전·해결 장면', key='studio_payoff', placeholder='예: 상자 속에서 작은 장난감이 튀어나옴')
+    ending = st.text_area('엔딩·반복 시청 이유', key='studio_ending', placeholder='예: 마지막 모습이 첫 화면으로 자연스럽게 이어짐')
+
+st.subheader('2. 원본과 다른 새 콘텐츠 기획')
+new_idea = st.text_input('새로운 이야기 핵심', key='studio_idea', placeholder='예: 우주복 입은 고양이가 마트에서 길을 잃는다')
+subject = st.text_input('새로운 주인공', key='studio_subject', placeholder='예: 주황색 고양이 우주비행사')
+scene = st.text_input('새로운 장소', key='studio_scene', placeholder='예: 미래 도시의 작은 마트')
+action = st.text_area('새로운 행동과 반전', key='studio_action', placeholder='예: 문을 열자 진열대가 작은 우주선으로 변한다')
+look = st.selectbox('이미지 스타일', ['실사 시네마틱', '3D 클레이 애니메이션', '동화 일러스트', '광고 화보'], key='studio_look')
+camera = st.selectbox('카메라 움직임', ['고정 카메라', '부드러운 트래킹', '느린 줌인', '핸드헬드'], key='studio_camera')
+duration = st.selectbox('영상 길이', ['5초', '8초', '10초', '15초'], index=2, key='studio_duration')
+
+STYLE = {'실사 시네마틱':'photorealistic cinematic film still', '3D 클레이 애니메이션':'charming handcrafted 3D clay animation', '동화 일러스트':'warm storybook illustration', '광고 화보':'premium commercial editorial photography'}
+CAMERA = {'고정 카메라':'stable locked-off camera', '부드러운 트래킹':'smooth tracking shot', '느린 줌인':'slow gradual push-in', '핸드헬드':'subtle handheld camera'}
+
+if st.button('✨ 새 아이디어 3개 + Higgsfield 프롬프트 생성', type='primary', key='studio_generate'):
+    if not all(x.strip() for x in [new_idea, subject, scene, action]):
+        st.warning('새로운 이야기 핵심·주인공·장소·행동과 반전을 먼저 입력해 줘.')
     else:
-        st.markdown('**이미지용 프롬프트**')
-        st.code(f'Photorealistic cinematic still of {subject} in {scene}. Concept: {idea}. Detailed lighting, expressive composition, vertical 9:16, no captions, no watermark.', language=None)
-        st.markdown('**영상용 프롬프트**')
-        st.code(f'Image-to-video, vertical 9:16. Main subject: {subject}. Location: {scene}. Action and twist: {action}. Clear action beats, natural coherent motion, cinematic camera tracking, consistent character appearance, no text.', language=None)
-        st.caption('자동 번역이 아니라 입력 내용을 조합한 영어 지시문이야. 영어로 작성하거나 ChatGPT에서 자연스럽게 번역해 사용할 수 있어.')
+        context = f"@{selected['username']} / {selected['kind']} / {selected['ratio']:,.1f}x" if selected else '원본 미선택'
+        structure = ' → '.join(x.strip() for x in [hook, tension, payoff, ending] if x.strip()) or '직접 관찰한 구조 미입력'
+        variations = [
+            f'① 귀여운 반전형: {subject}이(가) {scene}에서 평범한 일상을 보내다 {action}',
+            f'② 미스터리 호기심형: {scene}에 예상치 못한 이상 현상이 생기고, {subject}이(가) 그 비밀을 쫓는다. 결말은 {action}',
+            f'③ 상황 코미디형: {subject}이(가) {scene}에서 계획대로 하려 하지만 예상치 못한 상황이 계속 발생한다. 마지막에는 {action}',
+        ]
+        brief = f'''[Instagram Radar 4.0 · 재창작 분석 시트]
+참고 원본: {context}
+참고 링크: {selected['url'] if selected else '없음'}
+원본 캡션: {str(selected.get('caption',''))[:300] if selected else '미선택'}
+원본 관찰: 후킹={hook or '미입력'} / 전개={tension or '미입력'} / 반전={payoff or '미입력'} / 엔딩={ending or '미입력'}
+주의: 아래 아이디어는 입력 정보를 활용한 규칙 기반 초안이며, AI 자동 영상 판독 결과가 아닙니다.
+재사용할 구조: {structure}
+새로운 핵심 아이디어: {new_idea}
+'''
+        img = f'''{STYLE[look]}, {subject} in {scene}. Original fictional concept: {new_idea}. Frame should establish the subject and the setting clearly, expressive storytelling, coherent lighting, detailed textures, 9:16 vertical composition, leave safe space for captions, no text, no watermark. Avoid copying characters, shots, logos, or distinct visual assets from any reference video.'''
+        vid = f'''Image-to-video prompt for Higgsfield. Duration: {duration}. Format: vertical 9:16. Maintain visual consistency with the supplied starting image. Subject: {subject}. Setting: {scene}. Original action and twist: {action}. Camera: {CAMERA[camera]}. Pacing: immediate curiosity hook, visible action escalation, clear ending payoff. Realistic or stylistically consistent motion, physically coherent movement, stable character identity, no abrupt morphing, no captions, no logos. Create a new scene; do not reproduce shots from reference videos.'''
+        st.session_state['studio_output'] = {'brief':brief, 'ideas':'\n'.join(variations), 'image':img, 'video':vid}
+
+output = st.session_state.get('studio_output')
+if output:
+    st.subheader('3. 완성된 제작 초안')
+    st.caption('아래 텍스트는 각각 복사해 사용할 수 있어요. 한국어로 입력한 부분은 그대로 남아 있을 수 있으므로 Higgsfield 입력 시 문장을 다듬어 주세요.')
+    st.markdown('**새 콘텐츠 아이디어 3개**')
+    st.code(output['ideas'], language=None)
+    st.markdown('**이미지 생성 프롬프트**')
+    st.code(output['image'], language=None)
+    st.markdown('**Higgsfield 영상 생성 프롬프트**')
+    st.code(output['video'], language=None)
+    st.download_button('📄 분석 시트 + 프롬프트 TXT 저장', data=output['brief']+'\n'+output['ideas']+'\n\n[IMAGE]\n'+output['image']+'\n\n[VIDEO]\n'+output['video'], file_name='instagram_radar_higgsfield_brief.txt', mime='text/plain')
+    st.caption('실제 Higgsfield 영상 생성은 별도 서비스에서 진행하며 구독 플랜의 크레딧이 사용될 수 있어요.')
